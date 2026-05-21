@@ -1,250 +1,402 @@
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+
 import cv2 as cv
-import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.cluster import KMeans
-import os
-import time
 
 
-def callback(input):
+IMAGE_DIR = Path(__file__).resolve().parent / "images"
+DEFAULT_IMAGE_PATH = IMAGE_DIR / "test1.jpeg"
+DEFAULT_VIDEO_URL = "http://172.18.39.237:4747/video"
+
+
+@dataclass
+class AppConfig:
+    source_type: str
+    image_path: Path | None = None
+    video_source: str | None = None
+    crop_height: int = 80
+    process_every_n_frames: int = 3
+    window_name: str = "Drawing Assistant"
+
+
+def callback(_input):
     pass
 
-def cameraFeed():
-    cap = cv.VideoCapture("http://172.18.39.237:4747/video")
-    bestLines = [None,None,None,None]
-    count = 0
+
+def parse_args() -> AppConfig:
+    parser = argparse.ArgumentParser(
+        description="Detect paper corners from either an image or a video stream."
+    )
+    parser.add_argument(
+        "--source",
+        choices=("image", "video"),
+        default="video",
+        help="Choose whether to process a local image or a video stream.",
+    )
+    parser.add_argument(
+        "--image-path",
+        default=str(DEFAULT_IMAGE_PATH),
+        help="Path to the image file when using --source image.",
+    )
+    parser.add_argument(
+        "--video-source",
+        default=DEFAULT_VIDEO_URL,
+        help="Camera URL or device index when using --source video.",
+    )
+    parser.add_argument(
+        "--crop-height",
+        type=int,
+        default=80,
+        help="Crop this many pixels from the top of each video frame.",
+    )
+    parser.add_argument(
+        "--frame-skip",
+        type=int,
+        default=3,
+        help="Only process every Nth frame in video mode.",
+    )
+
+    args = parser.parse_args()
+    return AppConfig(
+        source_type=args.source,
+        image_path=Path(args.image_path),
+        video_source=args.video_source,
+        crop_height=args.crop_height,
+        process_every_n_frames=max(1, args.frame_skip),
+    )
+
+
+def warm_up_kmeans() -> None:
+    """Run a tiny dummy KMeans fit once to avoid first-use startup delay later."""
+    dummy = np.array([[0], [1]], dtype=np.float32)
+    KMeans(n_clusters=2, n_init=1).fit_predict(dummy)
+
+
+def create_capture(source: str) -> cv.VideoCapture:
+    """Create an OpenCV video capture object from a given source.
+
+    Args:
+        source: Video input source. If the value contains only digits,
+            it is interpreted as a local camera index such as ``0``.
+            Otherwise, it is treated as a stream URL or file path.
+
+    Returns:
+        cv.VideoCapture: An OpenCV capture object for the given source.
+    """
+
+    if source.isdigit():
+        return cv.VideoCapture(int(source))
+    return cv.VideoCapture(source)
+
+
+def crop_frame(frame: np.ndarray, crop_height: int) -> np.ndarray:
+    """Crop the top part of a video frame.
+
+    Args:
+        frame: Input image frame to crop.
+        crop_height: Number of pixels to remove from the top of the frame.
+
+    Returns:
+        np.ndarray: The cropped frame. If ``crop_height`` is less than or
+            equal to 0, the original frame is returned unchanged.
+    """
+    if crop_height <= 0:
+        return frame
+
+    height = frame.shape[0]
+    crop_height = min(crop_height, height)
+    return frame[crop_height:height, 0 : frame.shape[1]]
+
+
+def process_frame(frame: np.ndarray, last_best_lines) -> tuple[np.ndarray | None, list | None]:
+    """Run corner detection on a single frame.
+
+    Args:
+        frame: Input image frame to analyze.
+        last_best_lines: Previously detected best lines, used as fallback
+            if some lines cannot be detected in the current frame.
+
+    Returns:
+        tuple: A pair containing the output overlay image with detected
+            lines drawn on it, and the updated list of best lines.
+    """
+    overlay, best_lines = corner_detection(frame, last_best_lines)
+    return overlay, best_lines
+
+
+def run_video_mode(config: AppConfig) -> None:
+    """Process frames continuously from a video source.
+
+    Args:
+        config: Application configuration containing the video source,
+            crop settings, frame sampling rate, and display options.
+
+    Returns:
+        None
+    """
+    cap = create_capture(config.video_source or DEFAULT_VIDEO_URL)
+    if not cap.isOpened():
+        raise RuntimeError(f"Could not open video source: {config.video_source}")
+
+    best_lines = [None, None, None, None]
+    frame_count = 0
+
     while True:
         cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
         ret, frame = cap.read()
         cap.grab()
         if not ret:
+            if cv.waitKey(1) == 27:
+                break
             continue
-        count += 1
-        h, w = frame.shape[:2]
-        crop_height = 80
-        frame = frame[crop_height:h,0:w]
-        if(count %3 != 0):
+
+        frame_count += 1
+        frame = crop_frame(frame, config.crop_height)
+
+        if frame_count % config.process_every_n_frames != 0:
             cv.waitKey(1)
             continue
-        og_img = frame.copy()
-        overlay,bestLines = cornerDetection(og_img,bestLines)
-        if overlay is None: continue
 
-        cv.imshow("DroidCam Feed", overlay)
+        overlay, best_lines = process_frame(frame.copy(), best_lines)
+        if overlay is None:
+            continue
 
-        if cv.waitKey(1) == 27:  # ESC
+        cv.imshow(config.window_name, overlay)
+        if cv.waitKey(1) == 27:
             break
 
     cap.release()
     cv.destroyAllWindows()
 
-def x_intersect(rho, theta):
-    # Schnittpunkt mit y = 0
+
+def run_image_mode(config: AppConfig) -> None:
+    """Load and process a single image, then display the result.
+
+    Args:
+        config: Application configuration containing the image path
+            and display window settings.
+
+    Returns:
+        None
+    """
+    image_path = config.image_path or DEFAULT_IMAGE_PATH
+    image = cv.imread(str(image_path))
+    if image is None:
+        raise FileNotFoundError(f"Could not load image: {image_path}")
+
+    overlay, _ = process_frame(image, [None, None, None, None])
+    if overlay is None:
+        raise RuntimeError("Corner detection did not return an image overlay.")
+
+    while True:
+        cv.imshow(config.window_name, overlay)
+        key = cv.waitKey(1)
+        if key in (27, ord("q")):
+            break
+
+    cv.destroyAllWindows()
+
+
+def x_intersect(rho, theta) -> float:
+    """Compute the x-axis intersection of a line in Hough form.
+
+    Args:
+        rho: Distance of the line from the origin in Hough space.
+        theta: Angle of the line normal in radians.
+
+    Returns:
+        float: The x-coordinate where the line intersects the x-axis.
+    """
     return rho / np.cos(theta)
 
-def y_intersect(rho, theta):
-    # Schnittpunkt mit x = 0
+
+def y_intersect(rho, theta) -> float:
+    """Compute the y-axis intersection of a line in Hough form.
+
+    Args:
+        rho: Distance of the line from the origin in Hough space.
+        theta: Angle of the line normal in radians.
+
+    Returns:
+        float: The y-coordinate where the line intersects the y-axis.
+    """
     return rho / np.sin(theta)
 
 
+def corner_detection(og_img, last_best_lines) -> tuple[np.ndarray, list]:
+    """Detect the main paper boundary lines in an image.
 
-def cornerDetection(og_img, lastBestLines):
-    #root = os.getcwd()
-    #imgPath = os.path.join(root, "images\\test2.jpeg")
-    #og_img = cv.imread(imgPath)
-    
-    img = cv.cvtColor(og_img,cv.COLOR_BGR2RGB)
+    The function applies edge detection and a Hough transform to find
+    horizontal and vertical line candidates, groups them with KMeans,
+    selects the four most representative border lines, and draws them
+    onto an output overlay.
 
-    height,width,_ = img.shape
-    scale = 1/5
-    heightScale = int(height*scale)
-    widthScale = int(width*scale)
+    Args:
+        og_img: Original input image in BGR format.
+        last_best_lines: Previously detected boundary lines used as a
+            fallback when some lines are missing in the current frame.
 
-    
-
-    #img = cv.resize(img,(widthScale,heightScale), interpolation=cv.INTER_LINEAR)
-    #og_img = cv.resize(img,(widthScale,heightScale), interpolation=cv.INTER_LINEAR)
+    Returns:
+        tuple: A pair containing the overlay image with detected lines
+            drawn on it, and the updated list of best boundary lines.
+    """
+    img = cv.cvtColor(og_img, cv.COLOR_BGR2RGB)
     overlay = og_img.copy()
-    #name = "canny"
-    #cv.namedWindow(name)
 
-    #cv.createTrackbar("minThresh",name,0,255,callback)
-    #cv.createTrackbar("maxThresh",name,0,255,callback)
+    min_thresh = 30
+    max_thresh = 90
 
-    minThresh = 30
-    maxThresh = 90
-    
-    blur = cv.GaussianBlur(img, (5,5), 0)
-    cannyEdge = cv.Canny(blur, minThresh,maxThresh)
-    edges = cv.dilate(cannyEdge, None, iterations=1)
-    lines = cv.HoughLines(edges, 1, np.pi/180,80)
-    
-    paperEdges = []
-    col = [(0,0,0),(0,255,0),(255,0,0),(255,0,255)]
+    blur = cv.GaussianBlur(img, (5, 5), 0)
+    canny_edge = cv.Canny(blur, min_thresh, max_thresh)
+    edges = cv.dilate(canny_edge, None, iterations=1)
+    lines = cv.HoughLines(edges, 1, np.pi / 180, 80)
+
+    colors = [(0, 0, 0), (0, 255, 0), (255, 0, 0), (255, 0, 255)]
     horizontal = []
     vertical = []
-    verticalAbsRho = []
-    horizontalAbsRho = [] 
+    vertical_abs_rho = []
+    horizontal_abs_rho = []
+
     if lines is not None:
-        for i in range(0, len(lines)):
-            rho = lines[i][0][0]
-            #print("Rho: " + str(rho))
-            theta = lines[i][0][1]
-            #print("Theta: " + str(theta))
-            a = np.cos(theta)
-            b = np.sin(theta)
-            x0 = a * rho
-            y0 = b * rho
-            pt1 = (int(x0 + 1000*(-b)), int(y0 + 1000*(a)))
-            pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
-            #cv.line(overlay, pt1, pt2, col[i], 3, cv.LINE_AA)
+        for line in lines:
+            rho = line[0][0]
+            theta = line[0][1]
 
-            absRho = rho
-            if theta > np.pi/2.0:
-                absRho = abs(rho)
-            #    lines[i][0][0] = rho
-    
-            if(((theta <= np.pi*0.25 and theta >=0)  or (theta > np.pi*1.75 )) or (theta > np.pi*0.75 and theta <= np.pi*1.25)):
-                #print("vertical")
-                vertical.append(lines[i])
-                verticalAbsRho.append(absRho)
-                #cv.line(overlay, pt1, pt2, (255,0,0), 3, cv.LINE_AA)
+            abs_rho = rho
+            if theta > np.pi / 2.0:
+                abs_rho = abs(rho)
+
+            is_vertical = (
+                ((theta <= np.pi * 0.25 and theta >= 0) or (theta > np.pi * 1.75))
+                or (theta > np.pi * 0.75 and theta <= np.pi * 1.25)
+            )
+
+            if is_vertical:
+                vertical.append(line)
+                vertical_abs_rho.append(abs_rho)
             else:
-                #print("horizontal")
-                horizontal.append(lines[i])
-                horizontalAbsRho.append(absRho)
-                #cv.line(overlay, pt1, pt2, (0,255,0), 3, cv.LINE_AA)
-    #print(len(vertical), len(horizontal))
+                horizontal.append(line)
+                horizontal_abs_rho.append(abs_rho)
 
-    if(len(vertical) < 2 or len(horizontal) < 2): return overlay, lastBestLines
+    if len(vertical) < 2 or len(horizontal) < 2:
+        return overlay, last_best_lines
 
-    verticalRho = np.array(verticalAbsRho, dtype=np.float32).reshape(-1, 1)
-    horizontalRho = np.array(horizontalAbsRho, dtype=np.float32).reshape(-1, 1)
-    if(len(verticalRho) ==0 or len(horizontalRho)== 0):
-        return overlay, lastBestLines
-    
+    vertical_rho = np.array(vertical_abs_rho, dtype=np.float32).reshape(-1, 1)
+    horizontal_rho = np.array(horizontal_abs_rho, dtype=np.float32).reshape(-1, 1)
+    if len(vertical_rho) == 0 or len(horizontal_rho) == 0:
+        return overlay, last_best_lines
+
     try:
-        vertLabels = KMeans(n_clusters=2, n_init=1).fit_predict(verticalRho)
-        #print(vertLabels)
-        horLabels = KMeans(n_clusters=2, n_init=1).fit_predict(horizontalRho)
-        #print(horLabels)
-    except: return overlay, lastBestLines
+        vert_labels = KMeans(n_clusters=2, n_init=1).fit_predict(vertical_rho)
+        hor_labels = KMeans(n_clusters=2, n_init=1).fit_predict(horizontal_rho)
+    except Exception:
+        return overlay, last_best_lines
 
-    categorizedLines = [[],[],[],[]]
+    categorized_lines = [[], [], [], []]
 
-    for i,l in enumerate(vertLabels):
-        if(l == 0):
-            categorizedLines[0].append(vertical[i])
-        else:
-            categorizedLines[1].append(vertical[i])
+    for index, label in enumerate(vert_labels):
+        categorized_lines[label].append(vertical[index])
 
-    for i,l in enumerate(horLabels):
-        if(l == 0):
-            categorizedLines[2].append(horizontal[i])
-        else:
-            categorizedLines[3].append(horizontal[i])
+    for index, label in enumerate(hor_labels):
+        categorized_lines[label + 2].append(horizontal[index])
 
-    #bestLines = [leftVert, rightVert, topHorz, bottomHorz]
-    bestLines = [None,None,None,None]
-    for i,cat in enumerate(categorizedLines):
-        #calc mean rho
-        rhoSum = 0.0
-        for j in range(len(cat)):
-            rhoSum += cat[j][0][0]
-        meanrho = rhoSum/len(cat)
+    best_lines = [None, None, None, None]
+    for index, category in enumerate(categorized_lines):
+        if not category:
+            continue
 
-        #get best line
-        delta = 10000
-        bestIdx = -1
-        for j in range(len(cat)):
-            if(abs(meanrho - cat[j][0][0]) < delta):
-                delta = abs(meanrho - cat[j][0][0])
-                bestIdx = j
+        mean_rho = sum(line[0][0] for line in category) / len(category)
+        best_line = min(category, key=lambda line: abs(mean_rho - line[0][0]))
 
-        bestLine = cat[bestIdx]
+        rho = best_line[0][0]
+        theta = best_line[0][1]
 
-        rho = bestLine[0][0]
-        theta = bestLine[0][1]
-        #sort into bestLines[]
-        if(i < 2):
-            #vertical
+        if index < 2:
             xi = x_intersect(rho, theta)
 
-            if bestLines[0] is None:
-                bestLines[0] = bestLine
+            if best_lines[0] is None:
+                best_lines[0] = best_line
             else:
-                # Vergleiche x-Schnittpunkte
-                rho0 = bestLines[0][0][0]
-                theta0 = bestLines[0][0][1]
+                rho0 = best_lines[0][0][0]
+                theta0 = best_lines[0][0][1]
                 xi0 = x_intersect(rho0, theta0)
 
                 if xi < xi0:
-                    bestLines[1] = bestLines[0]
-                    bestLines[0] = bestLine
+                    best_lines[1] = best_lines[0]
+                    best_lines[0] = best_line
                 else:
-                    bestLines[1] = bestLine
+                    best_lines[1] = best_line
         else:
-            #horizontal
             yi = y_intersect(rho, theta)
 
-            if bestLines[2] is None:
-                bestLines[2] = bestLine
+            if best_lines[2] is None:
+                best_lines[2] = best_line
             else:
-                rho2 = bestLines[2][0][0]
-                theta2 = bestLines[2][0][1]
+                rho2 = best_lines[2][0][0]
+                theta2 = best_lines[2][0][1]
                 yi0 = y_intersect(rho2, theta2)
 
                 if yi < yi0:
-                    bestLines[3] = bestLines[2]
-                    bestLines[2] = bestLine
+                    best_lines[3] = best_lines[2]
+                    best_lines[2] = best_line
                 else:
-                    bestLines[3] = bestLine
+                    best_lines[3] = best_line
 
-    #print(bestLines)
+    if last_best_lines is not None:
+        for index, line in enumerate(best_lines):
+            if line is None and last_best_lines[index] is not None:
+                best_lines[index] = last_best_lines[index]
 
-    if(lastBestLines is not None):
-        for i in range(len(bestLines)):
-            if(bestLines[i] is None and lastBestLines[i] is not None):
-                bestLines[i] = lastBestLines[i]
+    for index, line in enumerate(best_lines):
+        if line is None:
+            continue
 
-    for i in range(len(bestLines)):
-        rho = bestLines[i][0][0]
-        theta = bestLines[i][0][1]
-        #print(rho)
-        #print(theta)
+        rho = line[0][0]
+        theta = line[0][1]
         a = np.cos(theta)
         b = np.sin(theta)
         x0 = a * rho
         y0 = b * rho
-        pt1 = (int(x0 + 1000*(-b)), int(y0 + 1000*(a)))
-        pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
-        #print(pt1)
-        #print(pt2)
-        #cv.line(overlay, pt1, pt2, col[i], 3, cv.LINE_AA)
+        pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * (a)))
+        pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * (a)))
         h, w = overlay.shape[:2]
         ok, clipped_pt1, clipped_pt2 = cv.clipLine((0, 0, w, h), pt1, pt2)
 
         if ok:
-            cv.line(overlay, clipped_pt1, clipped_pt2, col[i], 3, cv.LINE_AA)
+            cv.line(overlay, clipped_pt1, clipped_pt2, colors[index], 3, cv.LINE_AA)
 
-   
-    #contours, hierarchy = cv.findContours(cannyEdge, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    return overlay, best_lines
 
-    return overlay,bestLines
-    while True:
-        if cv.waitKey(1) == ord("q"):
-            break
 
-        #cv.drawContours(overlay, contours, -1, (0,255,0), 2)
+def main() -> None:
+    """Run the application in image or video mode.
 
-        cv.imshow(name, cannyEdge)
-        cv.imshow("Overlay", overlay)
+    Modes:
+        image: Load a single image from disk and display the detected lines.
+        video: Open a live video source and process frames continuously.
 
-    cv.destroyAllWindows()
+    Command-line arguments:
+        --source: Select `image` or `video` mode.
+        --image-path: Path to the input image for image mode.
+        --video-source: URL, file path, or camera index for video mode.
+        --crop-height: Number of pixels to crop from the top of each video frame.
+        --frame-skip: Process every Nth frame in video mode.
+
+    The function first warms up KMeans, then parses the arguments and
+    starts the selected mode.
+    """
+    warm_up_kmeans()
+    config = parse_args()
+
+    if config.source_type == "image":
+        run_image_mode(config)
+        return
+
+    run_video_mode(config)
+
 
 if __name__ == "__main__":
-    #KMeans warm up
-    dummy = np.array([[0],[1]], dtype=np.float32)
-    KMeans(n_clusters=2, n_init=1).fit_predict(dummy)
-    cameraFeed()
-    #cornerDetection()
+    main()
