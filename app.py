@@ -37,12 +37,6 @@ def parse_args() -> argparse.Namespace:
         help="Camera URL or device index when using --source video.",
     )
     parser.add_argument(
-        "--crop-height",
-        type=int,
-        default=80,
-        help="Crop this many pixels from the top of each video frame.",
-    )
-    parser.add_argument(
         "--frame-skip",
         type=int,
         default=3,
@@ -65,15 +59,6 @@ def create_capture(source: str) -> cv.VideoCapture:
     if source.isdigit():
         return cv.VideoCapture(int(source))
     return cv.VideoCapture(source)
-
-
-def crop_frame(frame: np.ndarray, crop_height: int) -> np.ndarray:
-    if crop_height <= 0:
-        return frame
-
-    height = frame.shape[0]
-    crop_height = min(crop_height, height)
-    return frame[crop_height:height, 0 : frame.shape[1]]
 
 
 def build_config(args: argparse.Namespace) -> PaperDetectionConfig:
@@ -133,7 +118,6 @@ def run_video_mode(args: argparse.Namespace, config: PaperDetectionConfig) -> No
             continue
 
         frame_count += 1
-        frame = crop_frame(frame, args.crop_height)
 
         if frame_count % max(1, args.frame_skip) != 0:
             cv.waitKey(1)
