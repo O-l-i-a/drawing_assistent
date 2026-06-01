@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from itertools import combinations
 
+from sklearn.cluster import KMeans
+
 import cv2 as cv
 import numpy as np
 
@@ -33,6 +35,112 @@ class PaperDetectionResult:
     warped: np.ndarray | None
     corners: np.ndarray | None
 
+def x_intersect(rho, theta):
+    # Schnittpunkt mit y = 0
+    return rho / np.cos(theta)
+
+def y_intersect(rho, theta):
+    # Schnittpunkt mit x = 0
+    return rho / np.sin(theta)
+
+def detect_corners_hough_kmeans(frame, last_best_lines=None):
+    img = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
+    overlay = frame.copy()
+
+    blur = cv.GaussianBlur(img, (5,5), 0)
+    edges = cv.Canny(blur, 30, 90)
+    edges = cv.dilate(edges, None, iterations=1)
+
+    lines = cv.HoughLines(edges, 1, np.pi/180, 80)
+    if lines is None:
+        return None, last_best_lines
+    
+    horizontal = []
+    vertical = []
+    vertical_rho = []
+    horizontal_rho = [] 
+
+    for line in lines:
+        rho, theta = line[0]
+        abs_rho = abs(rho)
+        if(((theta <= np.pi*0.25 and theta >=0)  or (theta > np.pi*1.75 )) or (theta > np.pi*0.75 and theta <= np.pi*1.25)):
+            vertical.append(line)
+            vertical_rho.append(abs_rho)
+        else:
+            horizontal.append(line)
+            horizontal_rho.append(abs_rho)
+
+    if len(vertical) < 2 or len(horizontal) < 2:
+        return None, last_best_lines
+        
+    vertical_rho = np.array(vertical_rho, dtype=np.float32).reshape(-1, 1)
+    horizontal_rho = np.array(horizontal_rho, dtype=np.float32).reshape(-1, 1)
+
+    try:
+        vert_labels = KMeans(n_clusters=2, n_init=1).fit_predict(vertical_rho)
+        hor_labels = KMeans(n_clusters=2, n_init=1).fit_predict(horizontal_rho)
+    except:
+        return None, last_best_lines
+    
+    categorized = [[], [], [], []]
+
+    for i,l in enumerate(vert_labels):
+        if(l == 0):
+            categorized[0].append(vertical[i])
+        else:
+            categorized[1].append(vertical[i])
+
+    for i,l in enumerate(hor_labels):
+        if(l == 0):
+            categorized[2].append(horizontal[i])
+        else:
+            categorized[3].append(horizontal[i])
+    
+    best_lines = [None, None, None, None] #[leftVert, rightVert, topHorz, bottomHorz]
+
+    for i, group in enumerate(categorized):
+        if len(group) == 0:
+            continue
+
+        mean_rho = np.mean([g[0][0] for g in group])
+        best_line = min(group, key=lambda g: abs(g[0][0] - mean_rho))
+        best_lines[i] = best_line
+
+    # fallback to last frame
+    if last_best_lines is not None:
+        for i in range(4):
+            if best_lines[i] is None and last_best_lines[i] is not None:
+                best_lines[i] = last_best_lines[i]
+
+    # compute intersections
+    def intersect(l1, l2):
+        rho1, th1 = l1
+        rho2, th2 = l2
+        A = np.array([
+            [np.cos(th1), np.sin(th1)],
+            [np.cos(th2), np.sin(th2)]
+        ])
+        b = np.array([rho1, rho2])
+        if abs(np.linalg.det(A)) < 1e-6:
+            return None
+        return np.linalg.solve(A, b)
+    
+    L = [(l[0][0], l[0][1]) for l in best_lines]
+
+    left, right, top, bottom = L
+
+    tl = intersect(left, top)
+    tr = intersect(right, top)
+    br = intersect(right, bottom)
+    bl = intersect(left, bottom)
+
+    if any(c is None for c in (tl, tr, br, bl)):
+        return None, best_lines 
+
+    corners = np.array([tl, tr, br, bl], dtype=np.float32)
+    return corners, best_lines
+
+
 
 def get_wrapped_paper(
     frame: np.ndarray,
@@ -43,42 +151,24 @@ def get_wrapped_paper(
     if config is None:
         config = PaperDetectionConfig()
 
-    gray = to_grayscale(frame)
-    blurred = reduce_noise(gray)
-    paper_mask = build_paper_mask(frame, blurred, config)
-    edges = detect_edges(blurred)
-    contours = find_external_contours(paper_mask)
-    candidate = select_paper_contour(contours, frame.shape, config)
-
-    if candidate is None:
-        paper_mask = build_grabcut_paper_mask(frame, config)
-        contours = find_external_contours(paper_mask)
-        candidate = select_paper_contour(contours, frame.shape, config)
-
-    corners = None
-    if candidate is not None:
-        corners = order_corners(candidate.reshape(4, 2))
-        corners = refine_corners_with_edges(corners, edges, frame.shape, config)
-    elif last_corners is not None:
-        corners = last_corners
-
     overlay = frame.copy()
-    contour_view = draw_contour_candidates(frame, contours, candidate)
-    warped = None
 
+    corners, updated_lines = detect_corners_hough_kmeans(frame, last_corners)
+
+    warped = None
     if corners is not None:
         draw_paper_outline(overlay, corners)
         warped = warp_paper(frame, corners)
-
+    
     collage = None
     if config.debug:
         collage = build_stage_collage(
             original=frame,
-            gray=gray,
-            blurred=blurred,
-            paper_mask=paper_mask,
-            edges=edges,
-            contour_view=contour_view,
+            gray=to_grayscale(frame),
+            blurred=reduce_noise(to_grayscale(frame)),
+            paper_mask=np.zeros(frame.shape[:2], dtype=np.uint8),
+            edges=np.zeros(frame.shape[:2], dtype=np.uint8),
+            contour_view=overlay,
             overlay=overlay,
             warped=warped,
         )

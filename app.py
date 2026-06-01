@@ -1,7 +1,8 @@
 import argparse
 from pathlib import Path
-
+import numpy as np
 import cv2 as cv
+from sklearn.cluster import KMeans
 
 try:
     from .get_wrapped_paper import PaperDetectionConfig, get_wrapped_paper
@@ -13,7 +14,7 @@ except ImportError:
 
 IMAGE_DIR = Path(__file__).resolve().parent / "images"
 DEFAULT_IMAGE_PATH = IMAGE_DIR / "test1.jpeg"
-DEFAULT_VIDEO_URL = "http://172.18.39.237:4747/video"
+DEFAULT_VIDEO_URL = "http://10.0.0.87:4747/video"
 
 
 def parse_args() -> argparse.Namespace:
@@ -135,6 +136,10 @@ def run_video_mode(args: argparse.Namespace, config: PaperDetectionConfig) -> No
 def main() -> None:
     args = parse_args()
     config = build_config(args)
+
+     # Warm-up KMeans 
+    dummy = np.array([[0], [1]], dtype=np.float32)
+    KMeans(n_clusters=2, n_init=1).fit_predict(dummy)
 
     if args.source == "image":
         run_image_mode(args, config)
