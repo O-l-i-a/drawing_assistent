@@ -5,10 +5,10 @@ import cv2 as cv
 from sklearn.cluster import KMeans
 
 try:
-    from .get_wrapped_paper import PaperDetectionConfig, get_wrapped_paper
+    from .get_wrapped_paper import PaperDetectionConfig, PaperState, get_wrapped_paper
     from .preprocess_drawing import preprocess_drawing
 except ImportError:
-    from get_wrapped_paper import PaperDetectionConfig, get_wrapped_paper
+    from get_wrapped_paper import PaperDetectionConfig, PaperState, get_wrapped_paper
     from preprocess_drawing import preprocess_drawing
 
 
@@ -68,11 +68,12 @@ def build_config(args: argparse.Namespace) -> PaperDetectionConfig:
 
 def build_display_image(
     frame: np.ndarray,
-    last_corners: np.ndarray | None,
+    state: PaperState,
     args: argparse.Namespace,
     config: PaperDetectionConfig,
+    validation_fail_count=0
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    result = get_wrapped_paper(frame, last_corners, config)
+    result = get_wrapped_paper(frame, state, config)
 
     if args.preprocess and result.warped is not None:
         processed = preprocess_drawing(result.warped)
@@ -106,8 +107,9 @@ def run_video_mode(args: argparse.Namespace, config: PaperDetectionConfig) -> No
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video source: {args.video_source}")
 
-    last_corners = None
+    state = PaperState()
     frame_count = 0
+    validation_fail_count = 0
 
     while True:
         cap.set(cv.CAP_PROP_BUFFERSIZE, 1)
@@ -124,7 +126,8 @@ def run_video_mode(args: argparse.Namespace, config: PaperDetectionConfig) -> No
             cv.waitKey(1)
             continue
 
-        display_image, last_corners = build_display_image(frame.copy(), last_corners, args, config)
+        display_image, last_corners = build_display_image(frame.copy(), state, args, config,validation_fail_count)
+        state.last_corners = last_corners
         cv.imshow("Drawing Assistant", display_image)
         if cv.waitKey(1) in (27, ord("q")):
             break
