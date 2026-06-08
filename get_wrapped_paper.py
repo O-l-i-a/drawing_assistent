@@ -59,172 +59,6 @@ def sort_corners(corners):
     c_sorted = np.roll(c_sorted, -tl_index, axis=0)
     return c_sorted
 
-def detect_corners_hough_kmeans(frame, last_best_lines=None):
-    img = cv.cvtColor(frame, cv.COLOR_BGR2RGB)
-    overlay = frame.copy()
-
-    blur = cv.GaussianBlur(img, (5,5), 0)
-    edges = cv.Canny(blur, 30, 90)
-    edges = cv.dilate(edges, None, iterations=1)
-
-    lines = cv.HoughLines(edges, 1, np.pi/180, 80)
-    if lines is None:
-        return None, last_best_lines
-    
-    horizontal = []
-    vertical = []
-    vertical_rho = []
-    horizontal_rho = [] 
-
-    for line in lines:
-        rho, theta = line[0]
-        if(((theta <= np.pi*0.25 and theta >=0)  or (theta > np.pi*1.75 )) or (theta > np.pi*0.75 and theta <= np.pi*1.25)):
-            vertical.append(line)
-        else:
-            horizontal.append(line)
-
-    def filter_parallel(lines, angle_tol=np.deg2rad(5)):
-        if len(lines) < 2:
-            return []
-        thetas = np.array([l[0][1] for l in lines])
-        keep = []
-        for i, th in enumerate(thetas):
-            if np.any(np.abs(thetas - th) < angle_tol) and np.count_nonzero(np.abs(thetas - th) < angle_tol) >= 2:
-                keep.append(lines[i])
-        return keep
-    
-    vertical = filter_parallel(vertical)
-    horizontal = filter_parallel(horizontal)
-
-    vertical_rho = np.array([abs(l[0][0]) for l in vertical], dtype=np.float32).reshape(-1,1)
-    horizontal_rho = np.array([abs(l[0][0]) for l in horizontal], dtype=np.float32).reshape(-1,1)
-
-
-    if len(vertical) < 2 or len(horizontal) < 2:
-        return None, last_best_lines
-
-
-    try:
-        vert_labels = KMeans(n_clusters=2, n_init=1).fit_predict(vertical_rho)
-        hor_labels = KMeans(n_clusters=2, n_init=1).fit_predict(horizontal_rho)
-    except:
-        return None, last_best_lines
-    
-    categorized = [[], [], [], []]
-
-    for i,l in enumerate(vert_labels):
-        if(l == 0):
-            categorized[0].append(vertical[i])
-        else:
-            categorized[1].append(vertical[i])
-
-    for i,l in enumerate(hor_labels):
-        if(l == 0):
-            categorized[2].append(horizontal[i])
-        else:
-            categorized[3].append(horizontal[i])
-    
-    best_lines = [None, None, None, None] #[leftVert, rightVert, topHorz, bottomHorz]
-
-    for i, group in enumerate(categorized):
-        if len(group) == 0:
-            continue
-
-        mean_rho = np.mean([g[0][0] for g in group])
-        best_line = min(group, key=lambda g: abs(g[0][0] - mean_rho))
-        best_lines[i] = best_line
-
-        rho_b = best_line[0][0]
-        theta_b = best_line[0][1]
-
-        if(i < 2):
-            #vertical
-            xi = x_intersect(rho_b, theta_b)
-
-            if best_lines[0] is None:
-                best_lines[0] = best_line
-            else:
-                # Vergleiche x-Schnittpunkte
-                rho0 = best_lines[0][0][0]
-                theta0 = best_lines[0][0][1]
-                xi0 = x_intersect(rho0, theta0)
-
-                if xi < xi0:
-                    best_lines[1] = best_lines[0]
-                    best_lines[0] = best_line
-                else:
-                    best_lines[1] = best_line
-        else:
-            #horizontal
-            yi = y_intersect(rho_b, theta_b)
-
-            if best_lines[2] is None:
-                best_lines[2] = best_line
-            else:
-                rho2 = best_lines[2][0][0]
-                theta2 = best_lines[2][0][1]
-                yi0 = y_intersect(rho2, theta2)
-
-                if yi < yi0:
-                    best_lines[3] = best_lines[2]
-                    best_lines[2] = best_line
-                else:
-                    best_lines[3] = best_line
-
-    # fallback to last frame
-    """ if last_best_lines is not None:
-        for i in range(4):
-            if best_lines[i] is None and last_best_lines[i] is not None:
-                best_lines[i] = last_best_lines[i] """
-
-    missing = sum(1 for l in best_lines if l is None)
-    if missing >= 2:
-        return None, last_best_lines if last_best_lines is not None else best_lines
-
-    if last_best_lines is not None:
-        def line_diff(l_new, l_old):
-            if l_new is None or l_old is None:
-                return np.inf
-            rho_n, th_n = l_new[0]
-            rho_o, th_o = l_old[0]
-            return abs(rho_n - rho_o) + 50 * abs(th_n - th_o)
-        
-        for i in range(4):
-            if best_lines[i] is not None and last_best_lines[i] is not None:
-                if line_diff(best_lines[i], last_best_lines[i]) > 80:
-                    best_lines[i] = last_best_lines[i]
-
-    # compute intersections
-    def intersect(l1, l2):
-        rho1, th1 = l1
-        rho2, th2 = l2
-        A = np.array([
-            [np.cos(th1), np.sin(th1)],
-            [np.cos(th2), np.sin(th2)]
-        ])
-        b = np.array([rho1, rho2])
-        if abs(np.linalg.det(A)) < 1e-6:
-            return None
-        return np.linalg.solve(A, b)
-    
-    L = [(l[0][0], l[0][1]) for l in best_lines]
-
-    left, right, top, bottom = L
-
-    #check geometry
-
-
-    tl = intersect(left, top)
-    tr = intersect(right, top)
-    br = intersect(right, bottom)
-    bl = intersect(left, bottom)
-
-    if any(c is None for c in (tl, tr, br, bl)):
-        return None, best_lines 
-
-    corners = np.array([tl, tr, br, bl], dtype=np.float32)
-    corners = sort_corners(corners)
-    return corners, best_lines
 
 def detect_corners(frame, last_corners):
     gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
@@ -333,6 +167,23 @@ def validate_geometry(
     ]
 
     if any(a < 60 or a > 120 for a in angles):
+        return False, old_corners
+    
+    #DIN-A4 check
+    w1 = np.linalg.norm(new_corners[1] - new_corners[0])
+    w2 = np.linalg.norm(new_corners[2] - new_corners[3])
+    h1 = np.linalg.norm(new_corners[3] - new_corners[0])
+    h2 = np.linalg.norm(new_corners[2] - new_corners[1])
+
+    width = (w1 + w2) / 2
+    height = (h1 + h2) / 2
+
+    if width == 0 or height == 0:
+        return False, old_corners
+
+    ratio = max(width, height) / min(width, height)
+
+    if not (1.2 < ratio < 1.6):
         return False, old_corners
    
     #stability
