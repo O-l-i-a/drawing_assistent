@@ -416,3 +416,32 @@ def build_stage_collage(
         rows.append(np.hstack((tiles[index], tiles[index + 1])))
 
     return np.vstack(rows)
+
+
+def jpeg_to_paper_detection_result(source: str | np.ndarray) -> PaperDetectionResult:
+    """Load a JPEG file or accept an image array and return a PaperDetectionResult.
+
+    This is for cases where the image is already a cropped, top-down photo of the paper.
+    The returned `warped` image will be the loaded image and `corners` will be
+    the full-image rectangle corners so downstream code (e.g. `preprocess_drawing`)
+    can use `result.warped` directly.
+
+    Args:
+        source: path to an image file or a BGR image numpy array.
+
+    Returns:
+        PaperDetectionResult with `overlay`, `collage`=None, `warped`, and `corners` set.
+    """
+    if isinstance(source, str):
+        image = cv.imread(source, cv.IMREAD_COLOR)
+        if image is None:
+            raise FileNotFoundError(f"Unable to read image: {source}")
+    else:
+        image = source.copy()
+
+    h, w = image.shape[:2]
+    overlay = image.copy()
+    warped = image.copy()
+    corners = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+
+    return PaperDetectionResult(overlay=overlay, collage=None, warped=warped, corners=corners)
