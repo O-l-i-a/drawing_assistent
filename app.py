@@ -174,18 +174,18 @@ def build_display_image(
                     cv.circle(frame_overlay, (int(pt_proj[0]), int(pt_proj[1])), 4, red, -1)
 
             display = cv.addWeighted(frame_overlay, 0.85, result.overlay, 0.15, 0)
-            return display, result.corners
+            return display,None, result.corners
 
         # blend overlay (red masks) with display if any overlay drawing happened
         if used_overlay:
             display = cv.addWeighted(overlay, 0.85, display, 0.15, 0)
 
-        return display, result.corners
+        return result.overlay,display, result.corners
 
     if args.debug and result.collage is not None:
-        return result.collage, result.corners
+        return result.collage,None, result.corners
 
-    return result.overlay, result.corners
+    return result.overlay,None, result.corners
 
 
 def run_image_mode(args: argparse.Namespace, config: PaperDetectionConfig) -> None:
@@ -228,9 +228,11 @@ def run_video_mode(args: argparse.Namespace, config: PaperDetectionConfig) -> No
             cv.waitKey(1)
             continue
 
-        display_image, last_corners = build_display_image(frame.copy(), state, args, config,validation_fail_count)
+        display_image,test, last_corners = build_display_image(frame.copy(), state, args, config,validation_fail_count)
         state.last_corners = last_corners
         cv.imshow("Drawing Assistant", display_image)
+        if(test is not None):
+            cv.imshow("Paper", test)
         if cv.waitKey(1) in (27, ord("q")):
             break
 
