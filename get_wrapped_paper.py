@@ -40,7 +40,9 @@ class PaperState:
     last_corners: np.ndarray | None = None
     last_best_lines: list | None = None
     validation_fail_count: int = 0
+    validation_count: int = 0
     MAX_FAILS: int = 10
+    MIN_VALID: int = 50 
 
 def x_intersect(rho, theta):
     # Schnittpunkt mit y = 0
@@ -251,14 +253,16 @@ def get_wrapped_paper(
         state.last_best_lines = updated_lines """
     warped = None
     if corners is not None:
-        if is_valid:
+        print(state.validation_count)
+        if is_valid and state.validation_count < state.MIN_VALID:
             state.validation_fail_count = 0
-            #state.last_corners = corners
-        else:
+            state.validation_count += 1
+
+        elif state.validation_count < state.MIN_VALID:
             state.validation_fail_count += 1
+            state.validation_count = 0
             if state.validation_fail_count > state.MAX_FAILS:
                 corners = corners_raw
-                #state.last_corners = corners
         draw_paper_outline(overlay, corners)
         warped = warp_paper(frame, corners)
     else:
