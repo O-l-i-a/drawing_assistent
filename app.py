@@ -98,11 +98,6 @@ def build_display_image(
             vis = processed
             strokes = []
 
-        # match the segmented regions against known templates
-        segments = [s for s in strokes if isinstance(s, dict) and "mask" in s]
-        if segments:
-            match_image = match_shapes(result.warped, segments)
-
         # `vis` may be grayscale or already color (BGR). Handle both.
         if vis.ndim == 2:
             display = cv.cvtColor(vis, cv.COLOR_GRAY2BGR)
@@ -113,6 +108,11 @@ def build_display_image(
         overlay = display.copy()
         used_overlay = False
         combined_mask = None
+
+        # match the segmented regions against known templates
+        segments = [s for s in strokes if isinstance(s, dict) and "mask" in s]
+        if segments:
+            match_image = match_shapes(overlay, segments)
 
         # draw strokes/blobs/regions for debugging onto overlay
         for idx, stroke in enumerate(strokes):

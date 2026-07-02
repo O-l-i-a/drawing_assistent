@@ -217,7 +217,7 @@ def validate_geometry(
         if abs(new_angle - old_angle) < max_angle_change:
             score += 1
 
-    if score >= 6:
+    if score >= 7:
         return True, new_corners
     elif score >= 4:
         return True, alpha * new_corners + (1-alpha) * old_corners
@@ -253,7 +253,6 @@ def get_wrapped_paper(
         state.last_best_lines = updated_lines """
     warped = None
     if corners is not None:
-        print(state.validation_count)
         if is_valid and state.validation_count < state.MIN_VALID:
             state.validation_fail_count = 0
             state.validation_count += 1
@@ -265,6 +264,11 @@ def get_wrapped_paper(
                 corners = corners_raw
         draw_paper_outline(overlay, corners)
         warped = warp_paper(frame, corners)
+        # crop frame to eliminate potential background
+        h,w = warped.shape[:2]
+        crop_w = int(w*0.05)
+        crop_h = int(h* 0.05)
+        warped = warped[crop_h : h - crop_h, crop_w : w - crop_w]
     else:
         warped = None
     

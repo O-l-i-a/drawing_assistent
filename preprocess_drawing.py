@@ -34,7 +34,7 @@ def preprocess_drawing(warped: np.ndarray) -> np.ndarray:
     vis = black_white_image(warped)
 
     # region_growing accepts either a path or an ndarray image
-    regions = region_growing(warped, min_area=500)
+    regions = region_growing(warped, min_area=50)
 
     # write a debug visualization (red overlays)
     try:
@@ -63,7 +63,7 @@ def region_growing(image_or_path: str | np.ndarray, min_area: int = 100) -> list
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     # THRESH_BINARY_INV: black ink -> 255 (foreground), white bg -> 0
-    _, binary = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY_INV)
+    binary = cv2.adaptiveThreshold(gray, 255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY_INV,31, 5)
 
     h, w = binary.shape
     visited = np.zeros((h, w), dtype=bool)
