@@ -27,20 +27,13 @@ def black_white_image(image: np.ndarray, thresh: int | None = None) -> np.ndarra
 def preprocess_drawing(warped: np.ndarray) -> np.ndarray:
     """Preprocess the warped paper image and return a binary visual and regions.
 
-    Uses the region-growing implementation below and writes a debug image
-    showing detected regions in red.
+    Uses the region-growing implementation below.
     """
     # keep a binary visual for downstream use
     vis = black_white_image(warped)
 
     # region_growing accepts either a path or an ndarray image
     regions = region_growing(warped, min_area=50)
-
-    # write a debug visualization (red overlays)
-    try:
-        visualize_regions(warped, regions, out_path="images/_debug_regions.png")
-    except Exception as exc:
-        print(f"[visualize_regions] failed: {exc}")
 
     return vis, regions
 
