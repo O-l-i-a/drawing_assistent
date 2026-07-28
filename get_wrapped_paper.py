@@ -41,8 +41,9 @@ class PaperState:
     last_best_lines: list | None = None
     validation_fail_count: int = 0
     validation_count: int = 0
-    MAX_FAILS: int = 10
-    MIN_VALID: int = 50 
+    MAX_FAILS: int = 50
+    MIN_VALID: int = 20 
+    corners_locked: bool = False
 
 def x_intersect(rho, theta):
     # Schnittpunkt mit y = 0
@@ -93,16 +94,36 @@ def detect_corners(frame, last_corners):
 def validate_geometry(
     new_corners: np.ndarray | None,
     old_corners: np.ndarray | None,
-    max_ratio_change: float = 0.25,
+    frame: np.ndarray |None,
+    max_ratio_change: float = 0.2,
     max_angle_change: float = 20.0,
     alpha: float = 0.25,
 ) -> tuple[bool, np.ndarray | None]:
-    
+    h, w = frame.shape[:2]
+    frame_area = w * h
+
     if new_corners is None:
         return False,old_corners
     new_corners = sort_corners(new_corners)
     if old_corners is None:
         return True,new_corners
+    
+    #DIN-A4 check
+    w1 = np.linalg.norm(new_corners[1] - new_corners[0])
+    w2 = np.linalg.norm(new_corners[2] - new_corners[3])
+    h1 = np.linalg.norm(new_corners[3] - new_corners[0])
+    h2 = np.linalg.norm(new_corners[2] - new_corners[1])
+
+    width = (w1 + w2) / 2
+    height = (h1 + h2) / 2
+
+    if width == 0 or height == 0:
+        return False, old_corners
+
+    ratio = max(width, height) / min(width, height)
+
+    if not (1.3 < ratio < 1.5):
+        return False, old_corners
     
     #edge length > 0
     lengths = [
@@ -112,7 +133,7 @@ def validate_geometry(
         np.linalg.norm(new_corners[0] - new_corners[3]),
     ]
 
-    if any(L < 5 for L in lengths):
+    if any(L < frame.shape[1] * 0.3 for L in lengths):
         return False, old_corners
     
     #area > 0
@@ -124,7 +145,7 @@ def validate_geometry(
             - y[0]*x[1] - y[1]*x[2] - y[2]*x[3] - y[3]*x[0]
         )
     
-    if polygon_area(new_corners) < 50:
+    if polygon_area(new_corners) < frame_area * 0.2:
         return False, old_corners
 
     #convexity
@@ -143,17 +164,6 @@ def validate_geometry(
     if not is_convex(new_corners):
         return False, old_corners
     
-    #no overlapping edges
-    def segments_intersect(a, b, c, d):
-        def ccw(p, q, r):
-            return (r[1]-p[1])*(q[0]-p[0]) > (q[1]-p[1])*(r[0]-p[0])
-        return (ccw(a, c, d) != ccw(b, c, d)) and (ccw(a, b, c) != ccw(a, b, d))
-
-    if segments_intersect(new_corners[0], new_corners[1], new_corners[2], new_corners[3]):
-        return False, old_corners
-    if segments_intersect(new_corners[1], new_corners[2], new_corners[3], new_corners[0]):
-        return False, old_corners
-
     #angles
     def angle(a, b, c):
         ab = a - b
@@ -169,23 +179,6 @@ def validate_geometry(
     ]
 
     if any(a < 60 or a > 120 for a in angles):
-        return False, old_corners
-    
-    #DIN-A4 check
-    w1 = np.linalg.norm(new_corners[1] - new_corners[0])
-    w2 = np.linalg.norm(new_corners[2] - new_corners[3])
-    h1 = np.linalg.norm(new_corners[3] - new_corners[0])
-    h2 = np.linalg.norm(new_corners[2] - new_corners[1])
-
-    width = (w1 + w2) / 2
-    height = (h1 + h2) / 2
-
-    if width == 0 or height == 0:
-        return False, old_corners
-
-    ratio = max(width, height) / min(width, height)
-
-    if not (1.2 < ratio < 1.6):
         return False, old_corners
    
     #stability
@@ -243,32 +236,35 @@ def get_wrapped_paper(
 
     overlay = frame.copy()
 
-    
     #corners_raw, updated_lines = detect_corners_hough_kmeans(frame, state.last_best_lines)
-    corners_raw, _ = detect_corners(frame, state.last_corners)
-    if corners_raw is None: 
-        return PaperDetectionResult(overlay, None, None, state.last_corners)
-    is_valid, corners = validate_geometry(corners_raw,state.last_corners)
+    if state.corners_locked:
+        corners = state.last_corners
+    else:
+        corners_raw, _ = detect_corners(frame, state.last_corners)
+        if corners_raw is None: 
+            return PaperDetectionResult(overlay, None, None, state.last_corners)
+        is_valid, corners = validate_geometry(corners_raw,state.last_corners, frame)
     """ if is_valid and updated_lines is not None:
         state.last_best_lines = updated_lines """
     warped = None
     if corners is not None:
-        if is_valid and state.validation_count < state.MIN_VALID:
+        if not state.corners_locked and  is_valid and state.validation_count < state.MIN_VALID:
             state.validation_fail_count = 0
             state.validation_count += 1
 
-        elif state.validation_count < state.MIN_VALID:
+        elif not state.corners_locked and state.validation_count < state.MIN_VALID:
             state.validation_fail_count += 1
             state.validation_count = 0
             if state.validation_fail_count > state.MAX_FAILS:
                 corners = corners_raw
+        
         draw_paper_outline(overlay, corners)
         warped = warp_paper(frame, corners)
         # crop frame to eliminate potential background
-        h,w = warped.shape[:2]
-        crop_w = int(w*0.05)
-        crop_h = int(h* 0.05)
-        warped = warped[crop_h : h - crop_h, crop_w : w - crop_w]
+        #h,w = warped.shape[:2]
+        #crop_w = int(w*0.05)
+        #crop_h = int(h* 0.05)
+        #warped = warped[crop_h : h - crop_h, crop_w : w - crop_w]
     else:
         warped = None
     
@@ -323,7 +319,7 @@ def draw_contour_candidates(
 def draw_paper_outline(overlay: np.ndarray, corners: np.ndarray) -> None:
     polygon = corners.astype(np.int32).reshape((-1, 1, 2))
     highlighted = overlay.copy()
-    cv.fillPoly(highlighted, [polygon], (0, 255, 0))
+    #cv.fillPoly(highlighted, [polygon], (0, 255, 0))
     cv.addWeighted(highlighted, 0.18, overlay, 0.82, 0, dst=overlay)
     cv.polylines(overlay, [polygon], True, (0, 255, 255), 8, cv.LINE_AA)
     cv.polylines(overlay, [polygon], True, (0, 0, 0), 2, cv.LINE_AA)

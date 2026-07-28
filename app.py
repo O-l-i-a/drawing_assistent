@@ -115,7 +115,7 @@ def build_display_image(
             match_image = match_shapes(overlay, segments)
 
         # draw strokes/blobs/regions for debugging onto overlay
-        for idx, stroke in enumerate(strokes):
+        """ for idx, stroke in enumerate(strokes):
             if stroke is None:
                 continue
 
@@ -156,12 +156,13 @@ def build_display_image(
                 continue
             pts = pts.astype(np.int32).reshape(-1, 1, 2)
             color = (int((37 * idx) % 256), int((79 * idx) % 256), int((151 * idx) % 256))
-            cv.polylines(overlay, [pts], isClosed=False, color=color, thickness=2, lineType=cv.LINE_AA)
+            cv.polylines(overlay, [pts], isClosed=False, color=color, thickness=2, lineType=cv.LINE_AA) """
 
-        # If we have a warped paper and corners, project combined mask back
+        """ # If we have a warped paper and corners, project combined mask back
         # onto the live overlay so regions appear in the camera view.
         if combined_mask is not None and result.warped is not None and result.corners is not None:
             h_warp, w_warp = result.warped.shape[:2]
+            
             # destination coords in warped image space
             dst = np.array([[0, 0], [w_warp - 1, 0], [w_warp - 1, h_warp - 1], [0, h_warp - 1]], dtype=np.float32)
             src_corners = result.corners.astype(np.float32)
@@ -182,7 +183,40 @@ def build_display_image(
                     cv.circle(frame_overlay, (int(pt_proj[0]), int(pt_proj[1])), 4, red, -1)
 
             display = cv.addWeighted(frame_overlay, 0.85, result.overlay, 0.15, 0)
+            return display, None, result.corners, match_image """
+        
+        if match_image is not None and result.warped is not None and result.corners is not None:
+            h_warp, w_warp = result.warped.shape[:2]
+            crop_w = int(w_warp * 0.05)
+            crop_h = int(h_warp * 0.05)
+            w_warp_scaled = w_warp - 2*crop_w
+            h_warp_scaled = h_warp- 2*crop_h
+
+            dst = np.array([[0, 0], [w_warp - 1, 0], [w_warp - 1, h_warp - 1], [0, h_warp - 1]], dtype=np.float32)
+            src_corners = result.corners.astype(np.float32)
+            M = cv.getPerspectiveTransform(dst, src_corners)
+
+            match_resized = cv.resize(match_image, (w_warp_scaled, h_warp_scaled), interpolation=cv.INTER_LINEAR)
+
+            match_full = np.zeros((h_warp, w_warp, 3), dtype=np.uint8)
+            match_full[crop_h:h_warp-crop_h, crop_w:w_warp-crop_w] = match_resized
+
+            match_back = cv.warpPerspective(match_full, M, (result.overlay.shape[1], result.overlay.shape[0]))
+
+            frame_overlay = result.overlay.copy()
+
+            alpha = 0.6
+            mask = (match_back.sum(axis=2) > 0).astype(np.uint8) * 255
+            frame_overlay[mask == 255] = cv.addWeighted(
+                frame_overlay[mask == 255], 1 - alpha,
+                match_back[mask == 255], alpha,
+                0
+            )
+            display = frame_overlay
             return display, None, result.corners, match_image
+
+        display = cv.addWeighted(frame_overlay, 0.85, result.overlay, 0.15, 0)
+        return display, None, result.corners, match_image
 
         # blend overlay (red masks) with display if any overlay drawing happened
         if used_overlay:

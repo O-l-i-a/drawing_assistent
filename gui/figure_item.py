@@ -56,7 +56,7 @@ class PlacedFigureItem(QGraphicsPolygonItem):
 
     def _apply_style(self) -> None:
         if self._locked:
-            pen = QPen(QColor(255, 80, 40), 3, Qt.PenStyle.DashLine)
+            pen = QPen(Qt.PenStyle.NoPen)
             brush = QBrush(Qt.BrushStyle.NoBrush)
         else:
             pen = QPen(QColor(255, 210, 0), 3)

@@ -37,7 +37,7 @@ def fit_to_canvas(image, box_w: int, box_h: int, pad_color=(200, 200, 200)):
     x0 = (box_w - new_w) // 2
     y0 = (box_h - new_h) // 2
     canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
-    return canvas
+    return canvas, x0, y0, scale
 
 
 class PaperCanvasView(QGraphicsView):

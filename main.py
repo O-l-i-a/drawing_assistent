@@ -1,7 +1,7 @@
 try:
-    from .app import main
+    from .gui_app import main
 except ImportError:
-    from app import main
+    from gui_app import main
 
 
 if __name__ == "__main__":
