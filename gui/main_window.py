@@ -98,19 +98,29 @@ class MainWindow(QMainWindow):
         self._start_button = QPushButton("Start")
         self._stop_button = QPushButton("Stop")
         self._compare_button = QPushButton("Compare")
+        self._next_line_button = QPushButton("Next line")
         self._segments_checkbox = QCheckBox("Show segments")
         self._score_label = QLabel("Score: --")
         self._start_button.clicked.connect(self._on_start)
         self._stop_button.clicked.connect(self._on_stop)
         self._compare_button.clicked.connect(self._on_compare)
+        self._next_line_button.clicked.connect(self._on_next_line)
+        self._next_line_button.setEnabled(False)
 
         self._do_match_overlay = False
+        # Off by default: advancing only happens when you press "Next line".
+        # Set to True (e.g. `window._auto_advance_line = True`) to also
+        # auto-advance once a matching stroke is detected for a few stable
+        # frames; the button itself always works regardless of this setting.
+        self._auto_advance_line = False
+        self._auto_scored = False  # guards against re-triggering Compare every tick once complete
         self.template_states = {}
 
         controls = QHBoxLayout()
         controls.addWidget(self._start_button)
         controls.addWidget(self._stop_button)
         controls.addWidget(self._compare_button)
+        controls.addWidget(self._next_line_button)
         controls.addWidget(self._segments_checkbox)
         controls.addWidget(self._score_label)
         controls.addStretch(1)
@@ -139,7 +149,11 @@ class MainWindow(QMainWindow):
     def process_frame_with_overlay(self, result, canonical):
         if result.warped is None or result.corners is None:
             return result.overlay, canonical
-        vis, regions = preprocess_drawing(result.warped)
+        # Segment the canonical (canvas-space) image, not the raw warped
+        # paper, so region masks share pixel coordinates with the placed
+        # figures (which live in canvas/scene space) -- required for
+        # line_by_line's ink-diff tracking to line up with the template.
+        _, regions = preprocess_drawing(canonical)
         segments = [r for r in regions if "mask" in r]
 
         canonical_overlay = canonical.copy()
@@ -161,8 +175,7 @@ class MainWindow(QMainWindow):
 
         for name, state in self.template_states.items():
             if name != "":
-                #match_image = line_by_line(resized_warped.copy(), segments, state)
-                canonical_overlay = line_by_line(canonical_overlay, segments, state, x0, y0, scale)
+                canonical_overlay = line_by_line(canonical_overlay, segments, state, auto_advance=self._auto_advance_line)
 
         warped_overlay = np.zeros_like(result.warped)
         paper_roi = canonical_overlay[int(y0):int(y0 + new_h), int(x0):int(x0 + new_w)]
@@ -197,7 +210,6 @@ class MainWindow(QMainWindow):
             canonical, x0, y0, scale = fit_to_canvas(result.warped, self._canvas.canvas_width, self._canvas.canvas_height)
             self._last_canonical = canonical
             self._last_fit = (x0, y0, scale)
-            display = self._segments_overlay(canonical) if self._segments_checkbox.isChecked() else canonical
 
             if self._do_match_overlay:
 
@@ -233,10 +245,16 @@ class MainWindow(QMainWindow):
 
                 processed, canonical = self.process_frame_with_overlay(result, canonical)
                 self._set_live_pixmap(processed)
-                display = canonical
+
+                all_complete = bool(self.template_states) and all(s.complete for s in self.template_states.values())
+                self._next_line_button.setEnabled(not all_complete)
+                if all_complete and not self._auto_scored:
+                    self._on_compare()
+                    self._auto_scored = True
             else:
                 self._set_live_pixmap(result.overlay)
-            
+
+            display = self._segments_overlay(canonical) if self._segments_checkbox.isChecked() else canonical
             self._canvas.set_background(display)
 
     def _segments_overlay(self, canonical):
@@ -260,13 +278,28 @@ class MainWindow(QMainWindow):
 
     def _on_start(self) -> None:
         self._do_match_overlay = True
-        self._canvas.lock_all() 
+        self._canvas.lock_all()
         self._state.corners_locked = True
+        self._next_line_button.setEnabled(True)
+        self._auto_scored = False
+        # Re-checkpoint ink tracking now, so anything drawn before this Start
+        # doesn't count as "the line you just drew" for the first advance.
+        for state in self.template_states.values():
+            state.last_ink_mask = None
 
     def _on_stop(self) -> None:
         self._do_match_overlay = False
         self._canvas.unlock_all()
         self._state.corners_locked = False
+        self._next_line_button.setEnabled(False)
+
+    def _on_next_line(self) -> None:
+        """Manually advance every placed figure's current stroke: fit its
+        template to whatever was drawn since Start (or the last Next line)
+        and reveal the following stroke. Always honored, independent of
+        `self._auto_advance_line`."""
+        for state in self.template_states.values():
+            state.manual_trigger = True
 
     def _on_compare(self) -> None:
         if self._last_canonical is None:

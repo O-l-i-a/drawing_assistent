@@ -63,31 +63,50 @@ def sort_corners(corners):
     return c_sorted
 
 
-def detect_corners(frame, last_corners):
-    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-    blur = cv.GaussianBlur(gray, (5, 5), 0)
-    edges = cv.Canny(blur, 40, 120)
+def detect_corners(frame, last_corners, config: PaperDetectionConfig | None = None):
+    if config is None:
+        config = PaperDetectionConfig()
 
-    contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    h, w = frame.shape[:2]
+    hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+    saturation = hsv[:, :, 1]
+    value = hsv[:, :, 2]
+
+    # The page is assumed to always be a uniform white sheet: low saturation,
+    # high brightness. Segmenting on that directly (instead of on edges)
+    # makes detection immune to ink drawn on the page -- a dark stroke fails
+    # both tests and just becomes a small hole inside the big white blob,
+    # rather than forming its own strong closed contour that competes with
+    # the page's actual boundary for "largest contour" the way Canny did.
+    white_mask = ((saturation <= config.max_saturation) & (value >= config.min_brightness)).astype(np.uint8) * 255
+
+    # Bridge over strokes (small holes in the blob) without rounding off the
+    # page's real corners: kernel scaled to the frame, not a fixed pixel size.
+    close_size = max(9, int(round(min(h, w) * 0.02))) | 1
+    white_mask = cv.morphologyEx(white_mask, cv.MORPH_CLOSE, np.ones((close_size, close_size), np.uint8))
+
+    contours, _ = cv.findContours(white_mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return None, None
+        return last_corners, None
     largest = max(contours, key=cv.contourArea)
+    if cv.contourArea(largest) < config.min_contour_area_ratio * h * w:
+        return last_corners, None
 
     peri = cv.arcLength(largest, True)
-    approx = cv.approxPolyDP(largest, 0.02 * peri, True)
+    approx = cv.approxPolyDP(largest, config.approx_epsilon_ratio * peri, True)
 
     if len(approx) == 4:
         corners = approx.reshape(4, 2).astype(np.float32)
         corners = sort_corners(corners)
         return corners, None
-    
+
     hull = cv.convexHull(largest)
     if len(hull) >= 4:
         rect = cv.minAreaRect(hull)
         box = cv.boxPoints(rect).astype(np.float32)
         corners = sort_corners(box)
         return corners, None
-    
+
     return last_corners, None
 
 
@@ -240,7 +259,7 @@ def get_wrapped_paper(
     if state.corners_locked:
         corners = state.last_corners
     else:
-        corners_raw, _ = detect_corners(frame, state.last_corners)
+        corners_raw, _ = detect_corners(frame, state.last_corners, config)
         if corners_raw is None: 
             return PaperDetectionResult(overlay, None, None, state.last_corners)
         is_valid, corners = validate_geometry(corners_raw,state.last_corners, frame)

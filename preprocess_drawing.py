@@ -24,7 +24,7 @@ def black_white_image(image: np.ndarray, thresh: int | None = None) -> np.ndarra
         _, bw = cv2.threshold(inv, thresh, 255, cv2.THRESH_BINARY)
     return bw
 
-def preprocess_drawing(warped: np.ndarray) -> np.ndarray:
+def preprocess_drawing(warped: np.ndarray, max_ink_threshold: int = 140, edge_margin: int = 40) -> np.ndarray:
     """Preprocess the warped paper image and return a binary visual and regions.
 
     Uses the region-growing implementation below.
@@ -33,13 +33,18 @@ def preprocess_drawing(warped: np.ndarray) -> np.ndarray:
     vis = black_white_image(warped)
 
     # region_growing accepts either a path or an ndarray image
-    regions = region_growing(warped, min_area=50)
+    regions = region_growing(warped, min_area=50, max_ink_threshold=max_ink_threshold, edge_margin=edge_margin)
 
     return vis, regions
 
 
 
-def region_growing(image_or_path: str | np.ndarray, min_area: int = 100) -> list[dict]:
+def region_growing(
+    image_or_path: str | np.ndarray,
+    min_area: int = 100,
+    max_ink_threshold: int = 170,
+    edge_margin: int = 40,
+) -> list[dict]:
     """
     Segment black shapes via region growing.
 
@@ -55,10 +60,32 @@ def region_growing(image_or_path: str | np.ndarray, min_area: int = 100) -> list
         img = image_or_path
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # The paper is assumed to always be a uniform white background, so a
+    # single global threshold (Otsu) separating dark ink from the page is far
+    # more stable frame-to-frame than a locally adaptive one, which reacts to
+    # small lighting/texture noise and flickers between frames. Clamp it to a
+    # sane band so a near-blank page (an almost unimodal histogram) can't push
+    # Otsu's estimate into misclassifying paper texture/shadow as ink.
+    # `max_ink_threshold` is the actual sensitivity knob: it caps how light a
+    # pixel is still allowed to be and count as ink. Lower it to require
+    # strong, clearly-drawn strokes and ignore faint shading/shadows on the
+    # page; raise it to also pick up lighter marks (at the cost of picking up
+    # more shading too).
+    otsu_thresh, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    thresh = float(np.clip(otsu_thresh, 120, max_ink_threshold))
     # THRESH_BINARY_INV: black ink -> 255 (foreground), white bg -> 0
-    binary = cv2.adaptiveThreshold(gray, 255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY_INV,31, 5)
+    _, binary = cv2.threshold(blurred, thresh, 255, cv2.THRESH_BINARY_INV)
+    # Clean up salt-and-pepper noise specks left over from the global threshold.
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
 
     h, w = binary.shape
+
+    # Ink within `edge_margin` pixels of the warped/canonical paper's border
+    # is almost always an artifact of the warp/crop (a sliver of background,
+    # the paper-outline overlay, perspective smearing) rather than a real
+    # stroke, so any region touching this border strip gets dropped below.
     visited = np.zeros((h, w), dtype=bool)
 
     # 4-connected neighbours
@@ -98,6 +125,10 @@ def region_growing(image_or_path: str | np.ndarray, min_area: int = 100) -> list
 
         ys, xs = pixel_arr[:, 0], pixel_arr[:, 1]
         x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+        if x0 <= edge_margin or y0 <= edge_margin or x1 >= w - 1 - edge_margin or y1 >= h - 1 - edge_margin:
+            continue
+
         bbox = (x0, y0, x1 - x0 + 1, y1 - y0 + 1)
         centroid = (int(xs.mean()), int(ys.mean()))
 
