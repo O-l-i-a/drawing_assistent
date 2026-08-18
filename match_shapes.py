@@ -423,14 +423,23 @@ def fit_step_transform(
         # actually well-posed from a single line; fit just those directly.
         ink_centroid, ink_angle, ink_length, _ = _line_pose(ink_centerline)
 
+        # tmpl_angle/tmpl_length are measured on the raw, untransformed
+        # template segment, so (ink_angle - tmpl_angle) and
+        # (ink_length / tmpl_length) are already the absolute new
+        # angle/scale -- not deltas to compose onto old_angle/old_sx, which
+        # would double-apply whatever rotation/scale was already there.
         angle = old_angle
         if flags.get("rotate", True):
-            delta = ((ink_angle - tmpl_angle + 90) % 180) - 90
-            angle = old_angle + delta
+            # A line's angle is only defined mod 180 (no inherent
+            # direction), so pick whichever full-angle candidate is closest
+            # to old_angle instead of risking a spurious 180 degree flip.
+            base = (ink_angle - tmpl_angle) % 180.0
+            candidates = (base, base - 180.0, base + 180.0)
+            angle = min(candidates, key=lambda a: abs(((a - old_angle + 180.0) % 360.0) - 180.0))
 
         sx, sy = old_sx, old_sy
         if (flags.get("scale_uniform", True) or flags.get("scale_anisotropic", False)) and tmpl_length > 1e-6:
-            sx = sy = ((old_sx + old_sy) / 2.0) * (ink_length / tmpl_length)
+            sx = sy = ink_length / tmpl_length
 
         rotated_scaled = compose_affine(0.0, 0.0, angle, sx, sy, old_shear)
         template_center_scene = apply_affine(rotated_scaled, tmpl_centroid[None, :])[0]

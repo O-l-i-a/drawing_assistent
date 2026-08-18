@@ -24,7 +24,7 @@ def black_white_image(image: np.ndarray, thresh: int | None = None) -> np.ndarra
         _, bw = cv2.threshold(inv, thresh, 255, cv2.THRESH_BINARY)
     return bw
 
-def preprocess_drawing(warped: np.ndarray, max_ink_threshold: int = 140, edge_margin: int = 40) -> np.ndarray:
+def preprocess_drawing(warped: np.ndarray, max_ink_threshold: int = 157, edge_margin: int = 40) -> np.ndarray:
     """Preprocess the warped paper image and return a binary visual and regions.
 
     Uses the region-growing implementation below.

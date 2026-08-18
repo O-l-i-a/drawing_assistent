@@ -207,8 +207,9 @@ class MainWindow(QMainWindow):
         self._state.last_corners = result.corners
 
         if result.warped is not None:
-            canonical, x0, y0, scale = fit_to_canvas(result.warped, self._canvas.canvas_width, self._canvas.canvas_height)
-            self._last_canonical = canonical
+            clean_canonical, x0, y0, scale = fit_to_canvas(result.warped, self._canvas.canvas_width, self._canvas.canvas_height)
+            canonical = clean_canonical
+            self._last_canonical = clean_canonical
             self._last_fit = (x0, y0, scale)
 
             if self._do_match_overlay:
@@ -254,17 +255,25 @@ class MainWindow(QMainWindow):
             else:
                 self._set_live_pixmap(result.overlay)
 
-            display = self._segments_overlay(canonical) if self._segments_checkbox.isChecked() else canonical
+            # Segments are always detected from the clean, un-annotated paper
+            # image -- never the line-by-line guide overlay, whose own drawn
+            # contours would otherwise get picked up as if they were ink --
+            # but drawn onto whatever's currently on the canvas (the guide
+            # included), so checking "Show segments" doesn't hide the
+            # line-by-line guidance on the left panel.
+            display = self._segments_overlay(clean_canonical, canonical) if self._segments_checkbox.isChecked() else canonical
             self._canvas.set_background(display)
 
-    def _segments_overlay(self, canonical):
-        """Red overlay of the region-growing segments, for live visual feedback only
-        (scoring always re-runs `preprocess_drawing` on the clean frame at Compare time)."""
-        _, regions = preprocess_drawing(canonical)
-        overlay = canonical.copy()
+    def _segments_overlay(self, clean_canonical, display_canonical):
+        """Red overlay of every region-growing segment detected on the clean
+        paper (scoring always re-runs `preprocess_drawing` on the clean
+        frame at Compare time), drawn on top of `display_canonical` so any
+        line-by-line guide already on screen stays visible."""
+        _, regions = preprocess_drawing(clean_canonical)
+        overlay = display_canonical.copy()
         for region in regions:
             overlay[region["mask"] == 255] = (0, 0, 255)
-        return cv.addWeighted(overlay, 0.5, canonical, 0.5, 0)
+        return cv.addWeighted(overlay, 0.5, display_canonical, 0.5, 0)
 
     def _set_live_pixmap(self, bgr) -> None:
         pixmap = cv_to_qpixmap(bgr)
