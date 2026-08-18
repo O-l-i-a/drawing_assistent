@@ -113,6 +113,10 @@ class MainWindow(QMainWindow):
         # auto-advance once a matching stroke is detected for a few stable
         # frames; the button itself always works regardless of this setting.
         self._auto_advance_line = False
+        # "Move here next" arrows between lines (currently only for A/tri,
+        # see TRANSITION_ARROW_SHAPES). Set to False (e.g.
+        # `window._show_transition_arrows = False`) to hide them.
+        self._show_transition_arrows = True
         self._auto_scored = False  # guards against re-triggering Compare every tick once complete
         self.template_states = {}
 
@@ -175,7 +179,11 @@ class MainWindow(QMainWindow):
 
         for name, state in self.template_states.items():
             if name != "":
-                canonical_overlay = line_by_line(canonical_overlay, segments, state, auto_advance=self._auto_advance_line)
+                canonical_overlay = line_by_line(
+                    canonical_overlay, segments, state,
+                    auto_advance=self._auto_advance_line,
+                    show_transition_arrows=self._show_transition_arrows,
+                )
 
         warped_overlay = np.zeros_like(result.warped)
         paper_roi = canonical_overlay[int(y0):int(y0 + new_h), int(x0):int(x0 + new_w)]

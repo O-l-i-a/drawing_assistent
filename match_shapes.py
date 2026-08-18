@@ -178,6 +178,14 @@ template_transform_flags: dict[str, dict[str, bool]] = {
     "H": _LETTER_TRANSFORM_FLAGS,
 }
 
+# Figures to show a "move here next" arrow for, from the start of the line
+# just drawn to the start of the next one. Restricted to shapes whose steps
+# are (at least partly) cleanly broken into individual lines by
+# `step_new_segment` -- for everything else there isn't a well-defined next
+# line to point to yet. Extend this set as more templates get real
+# stroke-by-stroke step data.
+TRANSITION_ARROW_SHAPES = {"A", "tri"}
+
 
 def get_template_steps(name: str) -> list[np.ndarray]:
     """Normalize a template entry into a list of steps (single-shape templates
@@ -529,7 +537,7 @@ def _initial_step_transform(state: "TemplateState") -> np.ndarray:
     return M_scene.astype(np.float64)
 
 
-def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True):
+def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True, show_transition_arrows: bool = True):
     """Draw the reference shape and the current step's target stroke over
     `image`, and advance once the user confirms a stroke was drawn.
 
@@ -575,6 +583,23 @@ def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True
     # never fit against it, so a fit is always line-to-line, never shape-wide.
     new_segment_template = step_new_segment(steps, step_idx)
     scene_new_segment = apply_affine(state.transform, new_segment_template) if new_segment_template is not None else None
+
+    # "Move here next" arrow: start of the line just shown -> start of the
+    # following one, so it's clear where to pick the pen back up. Only drawn
+    # when both ends are well-defined single lines (see TRANSITION_ARROW_SHAPES
+    # and step_new_segment's None case).
+    if (
+        show_transition_arrows
+        and state.name in TRANSITION_ARROW_SHAPES
+        and scene_new_segment is not None
+        and step_idx < len(steps) - 1
+    ):
+        next_segment_template = step_new_segment(steps, step_idx + 1)
+        if next_segment_template is not None:
+            next_scene_segment = apply_affine(state.transform, next_segment_template)
+            start_current = tuple(np.rint(scene_new_segment[0]).astype(int))
+            start_next = tuple(np.rint(next_scene_segment[0]).astype(int))
+            cv.arrowedLine(overlay, start_current, start_next, (255, 140, 0), 2, tipLength=0.15)
 
     current_mask = union_mask(regions, image.shape[:2]) if regions else np.zeros(image.shape[:2], dtype=np.uint8)
     # Ink is only looked for within a window around the expected line, using
