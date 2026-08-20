@@ -112,7 +112,7 @@ class MainWindow(QMainWindow):
         # Set to True (e.g. `window._auto_advance_line = True`) to also
         # auto-advance once a matching stroke is detected for a few stable
         # frames; the button itself always works regardless of this setting.
-        self._auto_advance_line = False
+        self._auto_advance_line = True
         # "Move here next" arrows between lines (currently only for A/tri,
         # see TRANSITION_ARROW_SHAPES). Set to False (e.g.
         # `window._show_transition_arrows = False`) to hide them.

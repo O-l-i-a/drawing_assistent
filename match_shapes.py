@@ -55,6 +55,82 @@ a_3 = np.array([
 ], dtype=np.float32)
 a = [a_1,a_2,a_3]
 
+o_1 = np.array([
+    [10, 20],
+    [90, 20]
+], dtype=np.float32)
+
+o_2 = np.array([
+    [60, 20],
+    [60, 0],
+    [60, 80],
+    [50, 80],
+], dtype=np.float32)
+
+o_3 = np.array([
+    [10, 20],
+    [90, 20],
+    [60, 20],
+    [60, 0],
+    [60, 80],
+    [50, 80],
+    [60, 80],
+    [60, 20],
+    [10, 70],
+    [60, 20]
+
+], dtype=np.float32)
+
+o = [o_1, o_2, o_3]
+
+
+ne_1 = np.array([
+    [50, 0],
+    [50, 20]    
+])
+ne_2 = np.array([
+    [50, 0],
+    [50, 20],
+    [10,20],
+    [80,20],
+    [50,50],
+    [10,70],
+    [50,50],
+    [80,20],
+    [50, 20]
+])
+
+ne_3 = np.array([
+    [50, 0],
+    [50, 20],
+    [10,20],
+    [80,20],
+    [50,50],
+    [10,70],
+    [50,50],
+    [50, 80],
+    [50,50],
+    [80,20],
+    [50,20]
+])
+ne_4 = np.array([
+    [50, 0],
+    [50, 20],
+    [20,20],
+    [80,20],
+    [50,50],
+    [10,70],
+    [50,50],
+    [50, 80],
+    [50,50],
+    [80,60],
+    [50,50],
+    [80,20],
+    [50,20]
+])
+
+ne = [ne_1, ne_2,ne_3, ne_4]
+
 template_square = np.array([
     [0, 0],
     [100, 0],
@@ -138,15 +214,15 @@ template_h = np.array([
 
 #template_list = [template_circle]
 template_list = [
-    a[-1], template_square, triangle[-1], template_circle,
+    a[-1], o[-1], ne[-1], template_square, triangle[-1], template_circle,
     template_b, template_c, template_d, template_e, template_f, template_g, template_h,
 ]
 line_by_line_template = [
-    a, template_square, triangle, template_circle,
+    a, o, ne, template_square, triangle, template_circle,
     template_b, template_c, template_d, template_e, template_f, template_g, template_h,
 ]
 
-template_names = ["A", "squ", "tri", "cir", "B", "C", "D", "E", "F", "G", "H"]
+template_names = ["A", "o", "ne", "squ", "tri", "cir", "B", "C", "D", "E", "F", "G", "H"]
 
 template_map = dict(zip(template_names, line_by_line_template))
 
@@ -166,6 +242,8 @@ template_transform_flags: dict[str, dict[str, bool]] = {
     # A is fit with only rotation + translation + uniform scaling -- no
     # shear/anisotropic scale.
     "A": DEFAULT_TRANSFORM_FLAGS,
+    "o": DEFAULT_TRANSFORM_FLAGS,
+    "ne": DEFAULT_TRANSFORM_FLAGS,
     "squ": DEFAULT_TRANSFORM_FLAGS,
     "tri": {**DEFAULT_TRANSFORM_FLAGS, "shear": True},
     "cir": {"rotate": False, "scale_uniform": True, "scale_anisotropic": False, "shear": False},
@@ -562,7 +640,7 @@ def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True
 
     if state.complete:
         # Nothing left to track -- just keep showing the finished shape.
-        cv.drawContours(overlay, [contour_draw], -1, (55, 55, 55), 4)
+        cv.drawContours(overlay, [contour_draw], -1, (0, 255, 0), 4)
         return cv.addWeighted(overlay, 0.5, image, 0.5, 0)
 
     step_idx = min(state.step_idx, len(steps) - 1)
@@ -575,7 +653,7 @@ def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True
     # contours coincide (e.g. on the last step), the grey reference stays
     # visible as a line running through the green band instead of being
     # fully painted over by it.
-    cv.drawContours(overlay, [step_contour], -1, (0, 255, 0), 10)
+    cv.drawContours(overlay, [step_contour], -1, (255, 50, 0), 10)
     cv.drawContours(overlay, [contour_draw], -1, (55, 55, 55), 4)
 
     # None when this step isn't a single, cleanly-isolated new line (see
