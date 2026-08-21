@@ -17,6 +17,7 @@ class TemplateState:
     complete: bool = False  # whether every step has been drawn and confirmed with "Next line"
     last_ink_mask: object = None  # snapshot of ink present at the last checkpoint (Start or Next line)
     manual_trigger: bool = False  # set by the "Next line" button, consumed on the following tick
+    score : float = None
 
 template_a = np.array([
     [10, 100],
@@ -65,6 +66,7 @@ o_2 = np.array([
     [60, 0],
     [60, 80],
     [50, 80],
+    [60, 80]
 ], dtype=np.float32)
 
 o_3 = np.array([
@@ -131,21 +133,35 @@ ne_4 = np.array([
 
 ne = [ne_1, ne_2,ne_3, ne_4]
 
-template_square = np.array([
+square_1 = np.array([
+    [0, 0],
+    [100, 0],
+], dtype=np.float32)
+square_2 = np.array([
+    [0, 0],
+    [100, 0],
+    [100, 100],
+    [100, 0]
+], dtype=np.float32)
+square_3 = np.array([
+    [0, 0],
+    [100, 0],
+    [100, 100],
+    [0, 100],
+    [100, 100],
+    [100, 0],
+], dtype=np.float32)
+square_4 = np.array([
     [0, 0],
     [100, 0],
     [100, 100],
     [0, 100],
 ], dtype=np.float32)
-template_triangle = np.array([
-    [50, 0],
-    [100, 100],
-    [0, 100],  
+square = [square_1,square_2, square_3, square_4]
 
-], dtype=np.float32)
 
 triangle_1 = np.array([[0,100],[50,0]], dtype=np.float32)
-triangle_2 = np.array([[0,100],[50,0],[100,100]], dtype=np.float32)
+triangle_2 = np.array([[0,100],[50,0],[100,100],[50,0]], dtype=np.float32)
 triangle_3 = np.array([[0,100],[50,0],[100,100],[0,100]], dtype=np.float32)
 triangle = [triangle_1, triangle_2, triangle_3]
 
@@ -153,6 +169,8 @@ triangle = [triangle_1, triangle_2, triangle_3]
 template_circle = np.array([
     [50 + 50 * np.cos(theta), 50 + 50 * np.sin(theta)] for theta in np.linspace(0, 2 * np.pi, 100)
 ], dtype=np.float32)
+
+circle = [template_circle]
 
 # Monoline letter templates: thin pen-stroke contours, same technique as
 # template_a (trace each stroke, retracing back over it where needed so the
@@ -167,59 +185,117 @@ def _arc(cx, cy, rx, ry, deg0, deg1, n=12):
 # B: spine + two bumps, each bump's arc returns to the spine on its own.
 _b_upper = _arc(15, 25, 48, 25, -90, 90)
 _b_lower = _arc(15, 75, 52, 25, -90, 90)
-template_b = np.array(
+
+b_1 =  np.array(
+    [(15, 100), (15, 0)],
+    dtype=np.float32,
+)
+
+b_2 =  np.array(
+    [(15, 100), (15, 0)] + _b_upper[1:],
+    dtype=np.float32,
+)
+
+b_3 =  np.array(
     [(15, 100), (15, 0)] + _b_upper[1:] + _b_lower[1:],
     dtype=np.float32,
 )
+
+b = [b_1,b_2,b_3]
 
 # C: a single open arc, traced out and back so the path closes on itself
 # without a stray chord across the opening.
 _c_arc = _arc(50, 50, 45, 45, 40, 320)
 template_c = np.array(_c_arc + list(reversed(_c_arc))[1:], dtype=np.float32)
+c = [template_c]
 
 # D: spine, then a single bulging arc back from bottom to top.
 _d_arc = _arc(15, 50, 50, 50, 90, -90)
-template_d = np.array([(15, 0), (15, 100)] + _d_arc[1:], dtype=np.float32)
+d_1 = np.array([(15, 0), (15, 100)], dtype=np.float32)
+d_2 = np.array([(15, 0), (15, 100)] + _d_arc[1:], dtype=np.float32)
+d = [d_1,d_2]
 
 # E: spine with three prongs, each retraced back to the spine.
-template_e = np.array([
+e_1 = np.array([
+    (15, 100), (15, 0),
+], dtype=np.float32)
+
+e_2 = np.array([
+    (15, 100), (15, 0),
+    (75, 0), (15, 0),
+], dtype=np.float32)
+
+e_3 = np.array([
+    (15, 100), (15, 0),
+    (75, 0), (15, 0),
+    (15, 42), (65, 42), (15, 42),
+], dtype=np.float32)
+
+e_4 = np.array([
     (15, 100), (15, 0),
     (75, 0), (15, 0),
     (15, 42), (65, 42), (15, 42),
     (15, 100), (75, 100), (15, 100),
 ], dtype=np.float32)
 
+e = [e_1,e_2,e_3,e_4]
+
 # F: spine with two prongs (no bottom one); the closing segment coincides
 # with the spine itself, so no extra retrace is needed.
-template_f = np.array([
+f_1 = np.array([
+    (15, 0),
+    (15, 100),
+], dtype=np.float32)
+
+f_2 = np.array([
+    (15, 0),
+    (15, 100),(15, 0),(75, 0),
+], dtype=np.float32)
+
+f_3 = np.array([
     (15, 0), (75, 0), (15, 0),
     (15, 42), (65, 42), (15, 42),
     (15, 100),
 ], dtype=np.float32)
+f = [f_1,f_2,f_3]
+
 
 # G: like C, with a small spur retraced into the opening.
 _g_arc = _arc(50, 50, 45, 45, 40, 320)
-template_g = np.array(
+g_1 = np.array(
+    _g_arc + list(reversed(_g_arc))[1:],
+    dtype=np.float32,
+)
+g_2 = np.array(
     [(55, 77)] + _g_arc + list(reversed(_g_arc))[1:] + [(55, 77)],
     dtype=np.float32,
 )
+g = [g_1,g_2]
 
 # H: two spines and a crossbar, retraced back to the start.
-template_h = np.array([
+h_1 = np.array([
+    (15, 0), (15, 100),
+], dtype=np.float32)
+h_2 = np.array([
+    (15, 0), (15, 100),
+    (15, 45), (65, 45),(15, 45),
+], dtype=np.float32)
+h_3 = np.array([
     (15, 0), (15, 100),
     (15, 45), (65, 45),
     (65, 0), (65, 100),
     (65, 45), (15, 45), (15, 0),
 ], dtype=np.float32)
+h = [h_1,h_2,h_3]
 
 #template_list = [template_circle]
 template_list = [
-    a[-1], o[-1], ne[-1], template_square, triangle[-1], template_circle,
-    template_b, template_c, template_d, template_e, template_f, template_g, template_h,
+    a[-1], o[-1], ne[-1], square[-1], triangle[-1], template_circle,
+    b[-1], template_c, d[-1], e[-1], f[-1], g[-1], h[-1],
 ]
 line_by_line_template = [
-    a, o, ne, template_square, triangle, template_circle,
-    template_b, template_c, template_d, template_e, template_f, template_g, template_h,
+    a, o, ne, square, triangle, circle,
+    b, c, d, e, f, g, h,
 ]
 
 template_names = ["A", "o", "ne", "squ", "tri", "cir", "B", "C", "D", "E", "F", "G", "H"]
@@ -264,6 +340,41 @@ template_transform_flags: dict[str, dict[str, bool]] = {
 # stroke-by-stroke step data.
 TRANSITION_ARROW_SHAPES = {"A", "tri"}
 
+arrow_list = {
+    "A": [
+        ((10,100), (50,0)),   
+        ((50,0),   (90,100)), 
+        ((30,50),  (70,50)),
+    ],
+
+    "o": [
+        ((10,20), (90,20)),
+        ((60,0), (60,60)),
+        ((60,20), (10,70)),
+    ],
+
+    "ne": [
+        ((50,0), (50,20)),
+        ((10,20), (80,20)),
+        ((50,50), (50,80)),
+        ((50,50), (80,60)),
+    ],
+
+    "squ": [
+        ((0,0), (100,0)),
+        ((100,0), (100,100)),
+        ((100,100), (0,100)),
+        ((0,100), (0,0)),
+    ],
+
+    "tri": [
+        ((0,100), (50,0)),
+        ((50,0), (100,100)),
+        ((100,100), (0,100)),
+    ],
+}
+
+
 
 def get_template_steps(name: str) -> list[np.ndarray]:
     """Normalize a template entry into a list of steps (single-shape templates
@@ -282,7 +393,23 @@ def template_to_canonical(step_pts, scale, x0, y0, item_pos=None, canonical_shap
                 return pts_with_item
     return pts
 
-
+def score_to_color(score):
+    if score < 10:
+        return (0, 0, 255)
+    elif( score < 50):
+        t = (score - 10) / 40
+        r = 255
+        g = int(255 * t)
+        b = 0
+        return (b, g, r)
+    elif score < 90:
+        t = (score - 50) / 40
+        r = int(255 * (1 - t))
+        g = 255
+        b = 0
+        return (b, g, r)
+    else:
+        return (0, 255, 0)
 
 def apply_affine(M: np.ndarray, pts: np.ndarray) -> np.ndarray:
     pts = np.asarray(pts, dtype=np.float64)
@@ -640,7 +767,13 @@ def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True
 
     if state.complete:
         # Nothing left to track -- just keep showing the finished shape.
-        cv.drawContours(overlay, [contour_draw], -1, (0, 255, 0), 4)
+        score = getattr(state, "score", None)
+        if score is None:
+            color = (55, 55, 55)  # fallback
+        else:
+            color = score_to_color(score)
+
+        cv.drawContours(overlay, [contour_draw], -1, color, 6)
         return cv.addWeighted(overlay, 0.5, image, 0.5, 0)
 
     step_idx = min(state.step_idx, len(steps) - 1)
@@ -666,18 +799,19 @@ def line_by_line(image, regions, state: TemplateState, auto_advance: bool = True
     # following one, so it's clear where to pick the pen back up. Only drawn
     # when both ends are well-defined single lines (see TRANSITION_ARROW_SHAPES
     # and step_new_segment's None case).
-    if (
-        show_transition_arrows
-        and state.name in TRANSITION_ARROW_SHAPES
-        and scene_new_segment is not None
-        and step_idx < len(steps) - 1
-    ):
-        next_segment_template = step_new_segment(steps, step_idx + 1)
-        if next_segment_template is not None:
-            next_scene_segment = apply_affine(state.transform, next_segment_template)
-            start_current = tuple(np.rint(scene_new_segment[0]).astype(int))
-            start_next = tuple(np.rint(next_scene_segment[0]).astype(int))
-            cv.arrowedLine(overlay, start_current, start_next, (255, 140, 0), 2, tipLength=0.15)
+    arrow_def = arrow_list.get(state.name)
+
+    if arrow_def is not None and step_idx < len(arrow_def):
+        start_pt, end_pt = arrow_def[step_idx]
+        start_scene = apply_affine(state.transform, np.array([start_pt], dtype=np.float32))[0]
+        end_scene   = apply_affine(state.transform, np.array([end_pt], dtype=np.float32))[0]
+
+        start_scene = tuple(np.rint(start_scene).astype(int))
+        end_scene   = tuple(np.rint(end_scene).astype(int))
+
+        cv.arrowedLine(overlay, start_scene, end_scene, (255,140,0), 2, tipLength=0.15)
+
+
 
     current_mask = union_mask(regions, image.shape[:2]) if regions else np.zeros(image.shape[:2], dtype=np.uint8)
     # Ink is only looked for within a window around the expected line, using

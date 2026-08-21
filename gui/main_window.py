@@ -327,6 +327,10 @@ class MainWindow(QMainWindow):
             self._score_label.setText("Score: place a figure first")
             return
         results, overall = score_targets(self._last_canonical, targets)
+        for r in results:
+            name = r["name"]
+            if name in self.template_states:
+                self.template_states[name].score = r["score"]
         parts = [f"{r['name']}={r['score']:.0f}%" for r in results]
         self._score_label.setText(f"Score: {overall:.0f}%  (" + ", ".join(parts) + ")")
 
