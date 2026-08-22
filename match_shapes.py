@@ -62,11 +62,14 @@ o_1 = np.array([
 ], dtype=np.float32)
 
 o_2 = np.array([
+    [10, 20],
+    [90, 20],
     [60, 20],
     [60, 0],
     [60, 80],
     [50, 80],
-    [60, 80]
+    [60, 80],
+    [60, 20],
 ], dtype=np.float32)
 
 o_3 = np.array([
@@ -372,6 +375,25 @@ arrow_list = {
         ((50,0), (100,100)),
         ((100,100), (0,100)),
     ],
+
+    "B": [((15,0),(15,100)),
+          ((15,0),(20,0)),
+          ((15,50),(20,50))],
+
+    "D": [((15,0),(15,100)),
+          ((15,0),(20,0))],
+
+    "E": [((15,0),(15,100)),
+          ((15, 0),(75, 0)),
+          ((15, 42), (65, 42)),
+          ((15, 100), (75, 100))],
+
+    "F": [((15,0),(15,100)),
+              ((15, 0),(75, 0)),
+              ((15, 42), (65, 42))],
+    "H": [((15,0),(15,100)),
+          ((15, 45), (65, 45)),
+          ((65, 0), (65, 100))]      
 }
 
 
@@ -692,8 +714,8 @@ def fit_step_transform(
 def _diff_matches_expected(
     diff_pts: np.ndarray | None,
     expected_scene_pts: np.ndarray,
-    angle_tol: float = 30.0,
-    length_ratio_tol: float = 0.6,
+    angle_tol: float = 40.0,
+    length_ratio_tol: float = 0.7,
 ) -> bool:
     """Cheap per-frame gate for automatic advance: does the ink drawn so far
     already look like the expected next stroke (similar direction and
